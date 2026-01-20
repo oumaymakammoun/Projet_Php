@@ -52,10 +52,60 @@ let vies = 0;
 let jeuActif = false; 
 let timerCreation;
 let vitesseMultiplier = 1;
-let highScore = localStorage.removeItem('ascensionHighScore') || 0; 
+let highScore = parseInt(localStorage.getItem('ascensionHighScore')) || 0; 
 let currentConfig = {};  
 let totalInstruments = 0;
+const hallOfFameDisplay = document.getElementById('hall-of-fame-display');
 
+// Charger les top 5 scores au démarrage
+chargerHallOfFame();
+
+// Fonction pour charger le Hall of Fame
+async function chargerHallOfFame() {
+    try {
+        // Lire les scores depuis le fichier via un endpoint PHP
+        const response = await fetch('get_scores.php');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.top5 && data.top5.length > 0) {
+                afficherTop5(data.top5);
+                // Mettre à jour le high score global si nécessaire
+                if (data.top5[0] && data.top5[0].score > highScore) {
+                    highScore = data.top5[0].score;
+                    afficheHighScore.innerText = highScore;
+                    localStorage.setItem('ascensionHighScore', highScore);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement du Hall of Fame:', error);
+    }
+}
+
+// Fonction pour afficher le top 5
+function afficherTop5(top5) {
+    if (!hallOfFameDisplay) return;
+    
+    let html = '<div style="background: rgba(166, 74, 255, 0.1); padding: 15px; border-radius: 10px; border: 1px solid #a64aff;">';
+    html += '<h3 style="color: #a64aff; margin-bottom: 10px; font-size: 1rem;">🏆 Top 5 des meilleurs scores</h3>';
+    html += '<ol style="text-align: left; color: #ccc; padding-left: 20px;">';
+    
+    top5.forEach((item, index) => {
+        const rank = index + 1;
+        const emoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '•';
+        html += `<li style="margin: 8px 0;">${emoji} <strong>${escapeHtml(item.pseudo)}</strong> - <span style="color: #00d2ff;">${item.score}</span></li>`;
+    });
+    
+    html += '</ol></div>';
+    hallOfFameDisplay.innerHTML = html;
+}
+
+// Fonction pour échapper le HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 afficheHighScore.innerText = highScore;
 
@@ -290,19 +340,73 @@ function showFloatingText(x, y, text) {
     setTimeout(() => el.remove(), 1000);
 }
 
-function finJeu() {
+async function finJeu() {
     jeuActif = false;
     if(timerCreation) clearTimeout(timerCreation); 
     
     zoneJeu.innerHTML = '';
 
     let msg = `Score final : ${score}`;
+    let nouveauRecordLocal = false;
+    
+    // Vérifier le record local
     if (score > highScore) {
         highScore = score;
         localStorage.setItem('ascensionHighScore', highScore);
-        msg += `<br><span style="color:gold; font-size:1.5rem">NOUVEAU RECORD ! 🏆</span>`;
+        nouveauRecordLocal = true;
         afficheHighScore.innerText = highScore;
-    } else {
+    }
+    
+    // Envoyer le score au serveur
+    try {
+        const response = await fetch('sauvegarder.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ score: score })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                // Afficher le top 5 mis à jour
+                if (data.top5 && data.top5.length > 0) {
+                    afficherTop5(data.top5);
+                    
+                    // Vérifier si c'est un nouveau record global
+                    const recordGlobal = data.top5[0];
+                    if (recordGlobal && recordGlobal.score === score) {
+                        msg += `<br><span style="color:gold; font-size:1.5rem">NOUVEAU RECORD MONDIAL ! 🌍🏆</span>`;
+                        if (recordGlobal.pseudo) {
+                            msg += `<br><span style="color:#00d2ff;">Félicitations ${escapeHtml(recordGlobal.pseudo)} !</span>`;
+                        }
+                    } else if (nouveauRecordLocal) {
+                        msg += `<br><span style="color:gold; font-size:1.5rem">NOUVEAU RECORD PERSONNEL ! 🏆</span>`;
+                    }
+                    
+                    // Afficher le record global
+                    if (recordGlobal && recordGlobal.score !== score) {
+                        msg += `<br><span style="color:#ccc;">Record mondial à battre : ${recordGlobal.score} par ${escapeHtml(recordGlobal.pseudo)}</span>`;
+                    }
+                    
+                    // Mettre à jour le high score global
+                    if (recordGlobal && recordGlobal.score > highScore) {
+                        highScore = recordGlobal.score;
+                        afficheHighScore.innerText = highScore;
+                        localStorage.setItem('ascensionHighScore', highScore);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Erreur lors de la sauvegarde du score:', error);
+        if (nouveauRecordLocal) {
+            msg += `<br><span style="color:gold; font-size:1.5rem">NOUVEAU RECORD ! 🏆</span>`;
+        }
+    }
+    
+    if (!nouveauRecordLocal && !msg.includes('Record mondial')) {
         msg += `<br>Record à battre : ${highScore}`;
     }
 
